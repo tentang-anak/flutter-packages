@@ -1,11 +1,16 @@
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+
+    dependencies {
+        classpath 'com.android.tools.build:gradle:7.0.1'
+    }
+}
+
 allprojects {
     repositories {
-        // See https://github.com/flutter/flutter/blob/master/docs/ecosystem/Plugins-and-Packages-repository-structure.md#gradle-structure for more info.
-        def artifactRepoKey = 'ARTIFACT_HUB_REPOSITORY'
-        if (System.getenv().containsKey(artifactRepoKey)) {
-            println "Using artifact hub"
-            maven { url System.getenv(artifactRepoKey) }
-        }
         google()
         mavenCentral()
     }
@@ -19,6 +24,6 @@ subprojects {
     project.evaluationDependsOn(':app')
 }
 
-tasks.register("clean", Delete) {
+task clean(type: Delete) {
     delete rootProject.buildDir
 }

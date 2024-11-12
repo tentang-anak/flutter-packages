@@ -5,18 +5,18 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart' show visibleForTesting;
+import 'package:flutter/services.dart';
 import 'package:google_sign_in_platform_interface/google_sign_in_platform_interface.dart';
 
-import 'src/messages.g.dart';
+import 'src/utils.dart';
 
 /// Android implementation of [GoogleSignInPlatform].
 class GoogleSignInAndroid extends GoogleSignInPlatform {
-  /// Creates a new plugin implementation instance.
-  GoogleSignInAndroid({
-    @visibleForTesting GoogleSignInApi? api,
-  }) : _api = api ?? GoogleSignInApi();
-
-  final GoogleSignInApi _api;
+  /// This is only exposed for test purposes. It shouldn't be used by clients of
+  /// the plugin as it may break or change at any time.
+  @visibleForTesting
+  MethodChannel channel =
+      const MethodChannel('plugins.flutter.io/google_sign_in_android');
 
   /// Registers this class as the default instance of [GoogleSignInPlatform].
   static void registerWith() {
@@ -40,82 +40,68 @@ class GoogleSignInAndroid extends GoogleSignInPlatform {
 
   @override
   Future<void> initWithParams(SignInInitParameters params) {
-    return _api.init(InitParams(
-      signInType: _signInTypeForOption(params.signInOption),
-      scopes: params.scopes,
-      hostedDomain: params.hostedDomain,
-      clientId: params.clientId,
-      serverClientId: params.serverClientId,
-      forceCodeForRefreshToken: params.forceCodeForRefreshToken,
-    ));
+    return channel.invokeMethod<void>('init', <String, dynamic>{
+      'signInOption': params.signInOption.toString(),
+      'scopes': params.scopes,
+      'hostedDomain': params.hostedDomain,
+      'clientId': params.clientId,
+      'serverClientId': params.serverClientId,
+      'forceCodeForRefreshToken': params.forceCodeForRefreshToken,
+    });
   }
 
   @override
   Future<GoogleSignInUserData?> signInSilently() {
-    return _api.signInSilently().then(_signInUserDataFromChannelData);
+    return channel
+        .invokeMapMethod<String, dynamic>('signInSilently')
+        .then(getUserDataFromMap);
   }
 
   @override
   Future<GoogleSignInUserData?> signIn() {
-    return _api.signIn().then(_signInUserDataFromChannelData);
+    return channel
+        .invokeMapMethod<String, dynamic>('signIn')
+        .then(getUserDataFromMap);
   }
 
   @override
   Future<GoogleSignInTokenData> getTokens(
       {required String email, bool? shouldRecoverAuth = true}) {
-    return _api
-        .getAccessToken(email, shouldRecoverAuth ?? true)
-        .then((String result) => GoogleSignInTokenData(
-              accessToken: result,
-            ));
+    return channel
+        .invokeMapMethod<String, dynamic>('getTokens', <String, dynamic>{
+      'email': email,
+      'shouldRecoverAuth': shouldRecoverAuth,
+    }).then((Map<String, dynamic>? result) => getTokenDataFromMap(result!));
   }
 
   @override
   Future<void> signOut() {
-    return _api.signOut();
+    return channel.invokeMapMethod<String, dynamic>('signOut');
   }
 
   @override
   Future<void> disconnect() {
-    return _api.disconnect();
+    return channel.invokeMapMethod<String, dynamic>('disconnect');
   }
 
   @override
-  Future<bool> isSignedIn() {
-    return _api.isSignedIn();
+  Future<bool> isSignedIn() async {
+    return (await channel.invokeMethod<bool>('isSignedIn'))!;
   }
 
   @override
-  Future<void> clearAuthCache({required String token}) {
-    return _api.clearAuthCache(token);
-  }
-
-  @override
-  Future<bool> requestScopes(List<String> scopes) {
-    return _api.requestScopes(scopes);
-  }
-
-  SignInType _signInTypeForOption(SignInOption option) {
-    switch (option) {
-      case SignInOption.standard:
-        return SignInType.standard;
-      case SignInOption.games:
-        return SignInType.games;
-    }
-    // Handle the case where a new type is added to the platform interface in
-    // the future, and this version of the package is used with it.
-    // ignore: dead_code
-    throw UnimplementedError('Unsupported sign in option: $option');
-  }
-
-  GoogleSignInUserData _signInUserDataFromChannelData(UserData data) {
-    return GoogleSignInUserData(
-      email: data.email,
-      id: data.id,
-      displayName: data.displayName,
-      photoUrl: data.photoUrl,
-      idToken: data.idToken,
-      serverAuthCode: data.serverAuthCode,
+  Future<void> clearAuthCache({String? token}) {
+    return channel.invokeMethod<void>(
+      'clearAuthCache',
+      <String, String?>{'token': token},
     );
+  }
+
+  @override
+  Future<bool> requestScopes(List<String> scopes) async {
+    return (await channel.invokeMethod<bool>(
+      'requestScopes',
+      <String, List<String>>{'scopes': scopes},
+    ))!;
   }
 }
