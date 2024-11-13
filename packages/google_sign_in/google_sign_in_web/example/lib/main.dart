@@ -11,7 +11,7 @@ void main() {
 /// App for testing
 class MyApp extends StatefulWidget {
   /// Default Constructor
-  const MyApp({super.key});
+  const MyApp({Key? key}) : super(key: key);
 
   @override
   State<MyApp> createState() => _MyAppState();

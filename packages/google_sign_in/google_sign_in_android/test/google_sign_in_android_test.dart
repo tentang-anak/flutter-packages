@@ -5,35 +5,65 @@
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:google_sign_in_android/google_sign_in_android.dart';
-import 'package:google_sign_in_android/src/messages.g.dart';
+import 'package:google_sign_in_android/src/utils.dart';
 import 'package:google_sign_in_platform_interface/google_sign_in_platform_interface.dart';
-import 'package:mockito/annotations.dart';
-import 'package:mockito/mockito.dart';
 
-import 'google_sign_in_android_test.mocks.dart';
+const Map<String, String> kUserData = <String, String>{
+  'email': 'john.doe@gmail.com',
+  'id': '8162538176523816253123',
+  'photoUrl': 'https://lh5.googleusercontent.com/photo.jpg',
+  'displayName': 'John Doe',
+  'idToken': '123',
+  'serverAuthCode': '789',
+};
 
-final GoogleSignInUserData _user = GoogleSignInUserData(
-  email: 'john.doe@gmail.com',
-  id: '8162538176523816253123',
-  photoUrl: 'https://lh5.googleusercontent.com/photo.jpg',
-  displayName: 'John Doe',
-  idToken: '123',
-  serverAuthCode: '789',
-);
-final GoogleSignInTokenData _token = GoogleSignInTokenData(
-  accessToken: '456',
-);
+const Map<dynamic, dynamic> kTokenData = <String, dynamic>{
+  'idToken': '123',
+  'accessToken': '456',
+  'serverAuthCode': '789',
+};
 
-@GenerateMocks(<Type>[GoogleSignInApi])
+const Map<String, dynamic> kDefaultResponses = <String, dynamic>{
+  'init': null,
+  'signInSilently': kUserData,
+  'signIn': kUserData,
+  'signOut': null,
+  'disconnect': null,
+  'isSignedIn': true,
+  'getTokens': kTokenData,
+  'requestScopes': true,
+};
+
+final GoogleSignInUserData? kUser = getUserDataFromMap(kUserData);
+final GoogleSignInTokenData kToken =
+    getTokenDataFromMap(kTokenData as Map<String, dynamic>);
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  late GoogleSignInAndroid googleSignIn;
-  late MockGoogleSignInApi api;
+  final GoogleSignInAndroid googleSignIn = GoogleSignInAndroid();
+  final MethodChannel channel = googleSignIn.channel;
+
+  final List<MethodCall> log = <MethodCall>[];
+  late Map<String, dynamic>
+      responses; // Some tests mutate some kDefaultResponses
 
   setUp(() {
-    api = MockGoogleSignInApi();
-    googleSignIn = GoogleSignInAndroid(api: api);
+    responses = Map<String, dynamic>.from(kDefaultResponses);
+    _ambiguate(TestDefaultBinaryMessengerBinding.instance)!
+        .defaultBinaryMessenger
+        .setMockMethodCallHandler(
+      channel,
+      (MethodCall methodCall) {
+        log.add(methodCall);
+        final dynamic response = responses[methodCall.method];
+        if (response != null && response is Exception) {
+          return Future<dynamic>.error('$response');
+        }
+        return Future<dynamic>.value(response);
+      },
+    );
+    log.clear();
   });
 
   test('registered instance', () {
@@ -43,159 +73,100 @@ void main() {
 
   test('signInSilently transforms platform data to GoogleSignInUserData',
       () async {
-    when(api.signInSilently()).thenAnswer((_) async => UserData(
-          email: _user.email,
-          id: _user.id,
-          photoUrl: _user.photoUrl,
-          displayName: _user.displayName,
-          idToken: _user.idToken,
-          serverAuthCode: _user.serverAuthCode,
-        ));
-
     final dynamic response = await googleSignIn.signInSilently();
-
-    expect(response, _user);
+    expect(response, kUser);
   });
-
   test('signInSilently Exceptions -> throws', () async {
-    when(api.signInSilently())
-        .thenAnswer((_) async => throw PlatformException(code: 'fail'));
-
+    responses['signInSilently'] = Exception('Not a user');
     expect(googleSignIn.signInSilently(),
         throwsA(isInstanceOf<PlatformException>()));
   });
 
   test('signIn transforms platform data to GoogleSignInUserData', () async {
-    when(api.signIn()).thenAnswer((_) async => UserData(
-          email: _user.email,
-          id: _user.id,
-          photoUrl: _user.photoUrl,
-          displayName: _user.displayName,
-          idToken: _user.idToken,
-          serverAuthCode: _user.serverAuthCode,
-        ));
-
     final dynamic response = await googleSignIn.signIn();
-
-    expect(response, _user);
+    expect(response, kUser);
   });
-
   test('signIn Exceptions -> throws', () async {
-    when(api.signIn())
-        .thenAnswer((_) async => throw PlatformException(code: 'fail'));
-
+    responses['signIn'] = Exception('Not a user');
     expect(googleSignIn.signIn(), throwsA(isInstanceOf<PlatformException>()));
   });
 
   test('getTokens transforms platform data to GoogleSignInTokenData', () async {
-    const bool recoverAuth = false;
-    when(api.getAccessToken(_user.email, recoverAuth))
-        .thenAnswer((_) async => _token.accessToken!);
-
-    final GoogleSignInTokenData response = await googleSignIn.getTokens(
-        email: _user.email, shouldRecoverAuth: recoverAuth);
-
-    expect(response, _token);
+    final dynamic response = await googleSignIn.getTokens(
+        email: 'example@example.com', shouldRecoverAuth: false);
+    expect(response, kToken);
+    expect(
+        log[0],
+        isMethodCall('getTokens', arguments: <String, dynamic>{
+          'email': 'example@example.com',
+          'shouldRecoverAuth': false,
+        }));
   });
 
-  test('getTokens will not pass null for shouldRecoverAuth', () async {
-    when(api.getAccessToken(_user.email, true))
-        .thenAnswer((_) async => _token.accessToken!);
+  test('Other functions pass through arguments to the channel', () async {
+    final Map<void Function(), Matcher> tests = <void Function(), Matcher>{
+      () {
+        googleSignIn.init(
+            hostedDomain: 'example.com',
+            scopes: <String>['two', 'scopes'],
+            signInOption: SignInOption.games,
+            clientId: 'fakeClientId');
+      }: isMethodCall('init', arguments: <String, dynamic>{
+        'hostedDomain': 'example.com',
+        'scopes': <String>['two', 'scopes'],
+        'signInOption': 'SignInOption.games',
+        'clientId': 'fakeClientId',
+        'serverClientId': null,
+        'forceCodeForRefreshToken': false,
+      }),
+      () {
+        googleSignIn.initWithParams(const SignInInitParameters(
+            hostedDomain: 'example.com',
+            scopes: <String>['two', 'scopes'],
+            signInOption: SignInOption.games,
+            clientId: 'fakeClientId',
+            serverClientId: 'fakeServerClientId',
+            forceCodeForRefreshToken: true));
+      }: isMethodCall('init', arguments: <String, dynamic>{
+        'hostedDomain': 'example.com',
+        'scopes': <String>['two', 'scopes'],
+        'signInOption': 'SignInOption.games',
+        'clientId': 'fakeClientId',
+        'serverClientId': 'fakeServerClientId',
+        'forceCodeForRefreshToken': true,
+      }),
+      () {
+        googleSignIn.getTokens(
+            email: 'example@example.com', shouldRecoverAuth: false);
+      }: isMethodCall('getTokens', arguments: <String, dynamic>{
+        'email': 'example@example.com',
+        'shouldRecoverAuth': false,
+      }),
+      () {
+        googleSignIn.clearAuthCache(token: 'abc');
+      }: isMethodCall('clearAuthCache', arguments: <String, dynamic>{
+        'token': 'abc',
+      }),
+      () {
+        googleSignIn.requestScopes(<String>['newScope', 'anotherScope']);
+      }: isMethodCall('requestScopes', arguments: <String, dynamic>{
+        'scopes': <String>['newScope', 'anotherScope'],
+      }),
+      googleSignIn.signOut: isMethodCall('signOut', arguments: null),
+      googleSignIn.disconnect: isMethodCall('disconnect', arguments: null),
+      googleSignIn.isSignedIn: isMethodCall('isSignedIn', arguments: null),
+    };
 
-    final GoogleSignInTokenData response = await googleSignIn.getTokens(
-        email: _user.email, shouldRecoverAuth: null);
+    for (final void Function() f in tests.keys) {
+      f();
+    }
 
-    expect(response, _token);
-  });
-
-  test('initWithParams passes arguments', () async {
-    const SignInInitParameters initParams = SignInInitParameters(
-      hostedDomain: 'example.com',
-      scopes: <String>['two', 'scopes'],
-      signInOption: SignInOption.games,
-      clientId: 'fakeClientId',
-    );
-
-    await googleSignIn.init(
-      hostedDomain: initParams.hostedDomain,
-      scopes: initParams.scopes,
-      signInOption: initParams.signInOption,
-      clientId: initParams.clientId,
-    );
-
-    final VerificationResult result = verify(api.init(captureAny));
-    final InitParams passedParams = result.captured[0] as InitParams;
-    expect(passedParams.hostedDomain, initParams.hostedDomain);
-    expect(passedParams.scopes, initParams.scopes);
-    expect(passedParams.signInType, SignInType.games);
-    expect(passedParams.clientId, initParams.clientId);
-    // These should use whatever the SignInInitParameters defaults are.
-    expect(passedParams.serverClientId, initParams.serverClientId);
-    expect(passedParams.forceCodeForRefreshToken,
-        initParams.forceCodeForRefreshToken);
-  });
-
-  test('initWithParams passes arguments', () async {
-    const SignInInitParameters initParams = SignInInitParameters(
-      hostedDomain: 'example.com',
-      scopes: <String>['two', 'scopes'],
-      signInOption: SignInOption.games,
-      clientId: 'fakeClientId',
-      serverClientId: 'fakeServerClientId',
-      forceCodeForRefreshToken: true,
-    );
-
-    await googleSignIn.initWithParams(initParams);
-
-    final VerificationResult result = verify(api.init(captureAny));
-    final InitParams passedParams = result.captured[0] as InitParams;
-    expect(passedParams.hostedDomain, initParams.hostedDomain);
-    expect(passedParams.scopes, initParams.scopes);
-    expect(passedParams.signInType, SignInType.games);
-    expect(passedParams.clientId, initParams.clientId);
-    expect(passedParams.serverClientId, initParams.serverClientId);
-    expect(passedParams.forceCodeForRefreshToken,
-        initParams.forceCodeForRefreshToken);
-  });
-
-  test('clearAuthCache passes arguments', () async {
-    const String token = 'abc';
-
-    await googleSignIn.clearAuthCache(token: token);
-
-    verify(api.clearAuthCache(token));
-  });
-
-  test('requestScopens passes arguments', () async {
-    const List<String> scopes = <String>['newScope', 'anotherScope'];
-    when(api.requestScopes(scopes)).thenAnswer((_) async => true);
-
-    final bool response = await googleSignIn.requestScopes(scopes);
-
-    expect(response, true);
-  });
-
-  test('signOut calls through', () async {
-    await googleSignIn.signOut();
-
-    verify(api.signOut());
-  });
-
-  test('disconnect calls through', () async {
-    await googleSignIn.disconnect();
-
-    verify(api.disconnect());
-  });
-
-  test('isSignedIn passes true response', () async {
-    when(api.isSignedIn()).thenAnswer((_) async => true);
-
-    expect(await googleSignIn.isSignedIn(), true);
-  });
-
-  test('isSignedIn passes false response', () async {
-    when(api.isSignedIn()).thenAnswer((_) async => false);
-
-    expect(await googleSignIn.isSignedIn(), false);
+    expect(log, tests.values);
   });
 }
+
+/// This allows a value of type T or T? to be treated as a value of type T?.
+///
+/// We use this so that APIs that have become non-nullable can still be used
+/// with `!` and `?` on the stable branch.
+T? _ambiguate<T>(T? value) => value;
